@@ -200,6 +200,61 @@ if echo "$ACTION" | grep -qE "$DANGEROUS_PATTERNS"; then
     exit 1
 fi
 
+# Handle local symbolic actions (from local intent analysis)
+handle_local_action() {
+    local action="$1"
+    case "$action" in
+        run_test)
+            echo "【执行测试命令】"
+            echo "Running: pwd && ls -la"
+            pwd
+            ls -la
+            ;;
+        show_help)
+            echo "【帮助】"
+            echo "支持的命令: ls, pwd, date, uptime, whoami, cat, head, tail, wc, stat, df, du, ps, git, jq"
+            echo ""
+            echo "示例语音命令："
+            echo "- '列出文件' -> 执行 ls"
+            echo "- '当前时间' -> 执行 date"
+            echo "- '系统状态' -> 执行 uptime"
+            ;;
+        list_commands)
+            echo "【可用命令列表】"
+            echo "ls, pwd, date, uptime, whoami, cat, head, tail, wc, stat, df, du, ps, git, jq"
+            ;;
+        show_status)
+            echo "【系统状态】"
+            uptime
+            echo ""
+            df -h
+            ;;
+        get_time)
+            echo "【当前时间】"
+            date
+            ;;
+        get_weather)
+            echo "【天气信息】"
+            echo "请使用天气命令查看天气"
+            ;;
+        review_request)
+            echo "⚠️  检测到潜在危险请求，需要人工审核"
+            ;;
+        none|null)
+            echo "未识别到有效命令"
+            ;;
+        *)
+            return 1  # Not a local action, let shell handle it
+            ;;
+    esac
+    return 0
+}
+
+# Try local action handler first
+if handle_local_action "$ACTION"; then
+    exit 0
+fi
+
 if ! validate_action_string "$ACTION"; then
     exit 1
 fi
