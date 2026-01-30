@@ -14,12 +14,13 @@ INTENT_TIME_REGEX='(^|[^a-zA-Z0-9])((time|date|clock|current time|what time|toda
 INTENT_UNSAFE_REGEX='(^|[^a-z])(delete|remove|rm|erase|shutdown|power off|reboot|restart|format|wipe|kill|terminate|drop database|drop table|factory reset|sudo)([^a-z]|$)'
 
 # Chinese patterns - use substring matching (simpler, more reliable for Chinese)
-CHINESE_TEST_PATTERNS=("测试" "麦克风测试" "语音测试")
-CHINESE_HELP_PATTERNS=("帮助" "指令" "怎么用" "使用方法")
-CHINESE_LIST_PATTERNS=("列表" "列出" "可用命令" "所有命令")
-CHINESE_STATUS_PATTERNS=("状态" "系统状态")
-CHINESE_WEATHER_PATTERNS=("天气" "天气预报")
-CHINESE_TIME_PATTERNS=("时间" "现在几点" "几点")
+# Include both Simplified (简体) and Traditional (繁體) characters
+CHINESE_TEST_PATTERNS=("测试" "測試" "麦克风测试" "麥克風測試" "语音测试" "語音測試")
+CHINESE_HELP_PATTERNS=("帮助" "幫助" "指令" "怎么用" "怎麼用" "使用方法")
+CHINESE_LIST_PATTERNS=("列表" "列表" "列出" "可用命令" "所有命令")
+CHINESE_STATUS_PATTERNS=("状态" "狀態" "系统状态" "系統狀態")
+CHINESE_WEATHER_PATTERNS=("天气" "天氣" "天气预报" "天氣預報")
+CHINESE_TIME_PATTERNS=("时间" "時間" "现在几点" "現在幾點" "几点" "幾點")
 
 normalize_intent_text() {
     local text="$1"
