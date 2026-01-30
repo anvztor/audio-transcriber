@@ -4,12 +4,12 @@
 set -e
 set -u
 
-INTENT_TEST_REGEX='(^|[^a-z])(test|self test|self-test|audio test|mic test|microphone test|sound check|check mic)([^a-z]|$)'
-INTENT_HELP_REGEX='(^|[^a-z])(help|usage|how do i|what can you do|commands|instruction)([^a-z]|$)'
-INTENT_LIST_REGEX='(^|[^a-z])(list|show|display|available|options|all commands)([^a-z]|$)'
-INTENT_STATUS_REGEX='(^|[^a-z])(status|state|health|uptime|are you running|system status)([^a-z]|$)'
-INTENT_WEATHER_REGEX='(^|[^a-z])(weather|forecast|temperature|rain|snow|humidity)([^a-z]|$)'
-INTENT_TIME_REGEX='(^|[^a-z])(time|date|clock|current time|what time|today)([^a-z]|$)'
+INTENT_TEST_REGEX='(^|[^a-z])(test|self test|self-test|audio test|mic test|microphone test|sound check|check mic|测试|测试语音|麦克风测试)([^a-z]|$)'
+INTENT_HELP_REGEX='(^|[^a-z])(help|usage|how do i|what can you do|commands|instruction|帮助|指令|怎么用)([^a-z]|$)'
+INTENT_LIST_REGEX='(^|[^a-z])(list|show|display|available|options|all commands|列出|列表|可用命令)([^a-z]|$)'
+INTENT_STATUS_REGEX='(^|[^a-z])(status|state|health|uptime|are you running|system status|状态|系统状态)([^a-z]|$)'
+INTENT_WEATHER_REGEX='(^|[^a-z])(weather|forecast|temperature|rain|snow|humidity|天气|天气预报)([^a-z]|$)'
+INTENT_TIME_REGEX='(^|[^a-z])(time|date|clock|current time|what time|today|时间|现在几点)([^a-z]|$)'
 
 INTENT_UNSAFE_REGEX='(^|[^a-z])(delete|remove|rm|erase|shutdown|power off|reboot|restart|format|wipe|kill|terminate|drop database|drop table|factory reset|sudo)([^a-z]|$)'
 
