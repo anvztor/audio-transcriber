@@ -56,6 +56,17 @@ Custom corrections in `~/.clawdbot/config/vocabulary.json`:
 ./scripts/transcribe.sh audio.ogg --model gemini-2.0-flash
 ```
 
+### Local Whisper Transcription
+```bash
+TRANSCRIBER_MODE=local ./scripts/transcribe-and-process.sh audio.ogg
+TRANSCRIBER_MODE=local WHISPER_MODEL=small ./scripts/transcribe-and-process.sh audio.ogg
+```
+
+### API Transcription Mode (Default)
+```bash
+TRANSCRIBER_MODE=api ./scripts/transcribe-and-process.sh audio.ogg
+```
+
 ### Transcription with Correction
 ```bash
 ./scripts/transcribe-and-correct.sh audio.ogg
@@ -87,6 +98,7 @@ scripts/
 ├── lib/
 │   ├── convert-audio.sh   # Audio conversion with caching
 │   ├── gemini-client.sh   # API client with retry logic
+│   ├── whisper-client.sh  # Local Whisper transcription
 │   ├── prompts.sh         # Optimized prompts
 │   └── corrections.py     # Semantic error correction
 ├── transcribe.sh
@@ -110,9 +122,15 @@ scripts/
 - `GEMINI_API_KEY` environment variable
 - `ffmpeg` for audio conversion
 - `python3` for error correction
+- `openai-whisper` (pip package) for local transcription
 - `jq` for JSON processing
 - `curl` for API calls
 - `inotify-tools` (optional, for instant detection)
+
+## Environment Variables
+
+- `TRANSCRIBER_MODE` (default: `api`) — `api` or `local`
+- `WHISPER_MODEL` (default: `base`) — `tiny`, `base`, `small`, `medium`, `large`
 
 ## Testing
 
