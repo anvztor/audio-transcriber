@@ -1,30 +1,71 @@
 #!/bin/bash
 # Transcribe audio and return text for agent to process
+# Optimized version with caching
 
-AUDIO_FILE="$1"
-OUTPUT_DIR="/tmp"
+set -e
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source library functions
+source "$SCRIPT_DIR/lib/convert-audio.sh"
+source "$SCRIPT_DIR/lib/gemini-client.sh"
+source "$SCRIPT_DIR/lib/prompts.sh"
+source "$SCRIPT_DIR/lib/transcript-cache.sh"
+
+AUDIO_FILE="${1:-}"
 
 [[ -z "$AUDIO_FILE" || ! -f "$AUDIO_FILE" ]] && exit 1
-[[ -z "$GEMINI_API_KEY" ]] && exit 1
 
-# Convert to MP3
-ffmpeg -y -i "$AUDIO_FILE" -ar 16000 -ac 1 -c:a libmp3lame "$OUTPUT_DIR/voice_tmp.mp3" 2>/dev/null
+emit_api_error() {
+    local error_type="$1"
+    local message="$2"
+    local retry_after="${3:-}"
+    local http_code="${4:-}"
 
-# Transcribe
-AUDIO_DATA=$(base64 -w0 "$OUTPUT_DIR/voice_tmp.mp3")
+    jq -n \
+        --arg type "$error_type" \
+        --arg message "$message" \
+        --arg retry_after "${retry_after:-}" \
+        --arg http_code "${http_code:-}" \
+        '{
+            ok: false,
+            error_type: $type,
+            message: $message,
+            retry_after: (if $retry_after == "" then null else ($retry_after | tonumber? // $retry_after) end),
+            http_code: (if $http_code == "" then null else ($http_code | tonumber? // $http_code) end),
+            source: "gemini"
+        }'
+}
 
-RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GEMINI_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"contents\": [{
-            \"parts\": [
-                {\"text\": \"请将这段音频转录成文字，只输出文字内容\"},
-                {\"inlineData\": {\"mimeType\": \"audio/mpeg\", \"data\": \"$AUDIO_DATA\"}}
-            ]
-        }]
-    }")
+# Validate API key
+if ! validate_api_key; then
+    emit_api_error "missing_api_key" "GEMINI_API_KEY not set"
+    exit 0
+fi
 
-rm -f "$OUTPUT_DIR/voice_tmp.mp3"
+# Check transcript cache before calling API
+if cached_transcript=$(read_transcript_cache "$AUDIO_FILE" 2>/dev/null); then
+    printf "%s" "$cached_transcript"
+    exit 0
+fi
 
-# Return transcribed text
-echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' 2>/dev/null
+# Convert audio (with caching)
+CONVERTED_FILE=$(convert_audio "$AUDIO_FILE") || exit 1
+
+# Transcribe with simple prompt (faster)
+AUDIO_DATA=$(encode_audio_base64 "$CONVERTED_FILE")
+PROMPT=$(build_simple_prompt)
+MODEL=$(select_model "simple")
+
+if transcript=$(transcribe_audio "$AUDIO_DATA" "$PROMPT" "$MODEL" 2>/dev/null); then
+    write_transcript_cache "$AUDIO_FILE" "$transcript" || true
+    printf "%s" "$transcript"
+    exit 0
+fi
+
+emit_api_error \
+    "${GEMINI_LAST_ERROR_TYPE:-api_error}" \
+    "${GEMINI_LAST_ERROR_MESSAGE:-API request failed}" \
+    "${GEMINI_LAST_RETRY_AFTER:-}" \
+    "${GEMINI_LAST_HTTP_CODE:-}"

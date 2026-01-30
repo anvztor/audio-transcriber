@@ -1,21 +1,42 @@
 #!/bin/bash
-# Voice command executor - transcribe, understand intent, and execute task
+# Voice command analyzer - transcribe and understand intent
+# Optimized version with better prompts and caching
 
 set -e
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source library functions
+source "$SCRIPT_DIR/lib/convert-audio.sh"
+source "$SCRIPT_DIR/lib/gemini-client.sh"
+source "$SCRIPT_DIR/lib/prompts.sh"
 
 AUDIO_FILE=""
-MODEL="gemini-2.5-flash"
-OUTPUT_DIR="/tmp"
+MODEL=""
+CONTEXT=""
 
 usage() {
-    echo "Usage: $0 <audio_file> [--model <name>]"
+    echo "Usage: $0 <audio_file> [--model <name>] [--context <text>]"
     exit 1
 }
 
 while [[ $# -gt 0 ]]; do
-    case $1 in
+    case "${1:-}" in
         --model)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --model requires a value" >&2
+                usage
+            fi
             MODEL="$2"
+            shift 2
+            ;;
+        --context)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --context requires a value" >&2
+                usage
+            fi
+            CONTEXT="$2"
             shift 2
             ;;
         -*)
@@ -33,35 +54,53 @@ if [[ -z "$AUDIO_FILE" || ! -f "$AUDIO_FILE" ]]; then
     usage
 fi
 
-if [[ -z "$GEMINI_API_KEY" ]]; then
-    echo "Error: GEMINI_API_KEY not set"
-    exit 1
+# Validate API key
+validate_api_key || exit 1
+
+# Select model for intent analysis
+if [[ -z "$MODEL" ]]; then
+    MODEL=$(select_model "intent")
 fi
 
-# Convert to MP3
-CONVERTED_FILE="$OUTPUT_DIR/$(basename "$AUDIO_FILE").mp3"
-ffmpeg -y -i "$AUDIO_FILE" -ar 16000 -ac 1 -c:a libmp3lame "$CONVERTED_FILE" 2>/dev/null
+# Convert audio (with caching)
+CONVERTED_FILE=$(convert_audio "$AUDIO_FILE") || {
+    echo "Error: Failed to convert audio" >&2
+    exit 1
+}
 
-# Transcribe
-AUDIO_DATA=$(base64 -w0 "$CONVERTED_FILE")
+# Encode to base64
+AUDIO_DATA=$(encode_audio_base64 "$CONVERTED_FILE")
 
-RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$GEMINI_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"contents\": [{
-            \"parts\": [
-                {\"text\": \"请将这段音频转录成文字，并分析用户的意图和需求。只输出以下格式：\\n【转录】<用户说的话>\\n【意图】<一句话说明用户想要什么>\\n【任务类型】<read/exec/memory/search/help/other>\"},
-                {\"inlineData\": {\"mimeType\": \"audio/mpeg\", \"data\": \"$AUDIO_DATA\"}}
+# Build intent analysis prompt
+PROMPT=$(build_intent_prompt "$CONTEXT")
+
+# Build payload with jq
+PAYLOAD=$(jq -n \
+    --arg prompt "$PROMPT" \
+    --arg audio "$AUDIO_DATA" \
+    '{
+        contents: [{
+            parts: [
+                {text: $prompt},
+                {inlineData: {mimeType: "audio/mpeg", data: $audio}}
             ]
         }]
-    }")
+    }')
 
-TRANSCRIPT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' 2>/dev/null)
-
-if [[ -z "$TRANSCRIPT" || "$TRANSCRIPT" == "null" ]]; then
-    echo "Error: Failed to transcribe"
+# Call API
+RESPONSE=$(call_gemini_api "$PAYLOAD" "$MODEL" "intent") || {
+    echo "Error: Failed to analyze intent" >&2
     exit 1
+}
+
+# Parse and apply corrections to transcribed text
+RESULT=$(parse_response "$RESPONSE")
+
+# If result is JSON, extract text and correct it
+if echo "$RESULT" | jq -e '.text' &>/dev/null; then
+    TEXT=$(echo "$RESULT" | jq -r '.text')
+    CORRECTED_TEXT=$(echo "$TEXT" | python3 "$SCRIPT_DIR/lib/corrections.py")
+    RESULT=$(echo "$RESULT" | jq --arg text "$CORRECTED_TEXT" '.text = $text')
 fi
 
-echo "$TRANSCRIPT"
-rm -f "$CONVERTED_FILE"
+echo "$RESULT"

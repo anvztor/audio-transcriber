@@ -1,28 +1,68 @@
 #!/bin/bash
 # Audio transcription script using Gemini API
+# Optimized version with caching and retry logic
 
 set -e
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source library functions
+source "$SCRIPT_DIR/lib/convert-audio.sh"
+source "$SCRIPT_DIR/lib/gemini-client.sh"
+source "$SCRIPT_DIR/lib/prompts.sh"
 
 AUDIO_FILE=""
-MODEL="gemini-2.5-flash"
-OUTPUT_DIR="/tmp"
+MODEL=""
+TMPDIR_DEFAULT="${TMPDIR:-/tmp}"
+OUTPUT_DIR="${OUTPUT_DIR:-$TMPDIR_DEFAULT}"
+USE_SIMPLE_PROMPT=false
 
 usage() {
-    echo "Usage: $0 <audio_file> [--model <name>] [--out <dir>]"
+    echo "Usage: $0 <audio_file> [--model <name>] [--out <dir>] [--simple]"
     echo "Example: $0 audio.ogg --model gemini-2.0-flash"
     exit 1
 }
 
 # Parse arguments
+validate_path_arg() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        echo "Error: path is empty" >&2
+        return 1
+    fi
+    if [[ "$path" == -* ]]; then
+        echo "Error: path must not start with '-': $path" >&2
+        return 1
+    fi
+    if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
+        echo "Error: path contains newline characters" >&2
+        return 1
+    fi
+}
+
+# Parse arguments
 while [[ $# -gt 0 ]]; do
-    case $1 in
+    case "${1:-}" in
         --model)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --model requires a value" >&2
+                usage
+            fi
             MODEL="$2"
             shift 2
             ;;
         --out)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --out requires a value" >&2
+                usage
+            fi
             OUTPUT_DIR="$2"
             shift 2
+            ;;
+        --simple)
+            USE_SIMPLE_PROMPT=true
+            shift
             ;;
         -*)
             echo "Unknown option: $1"
@@ -39,48 +79,45 @@ if [[ -z "$AUDIO_FILE" ]]; then
     usage
 fi
 
+validate_path_arg "$AUDIO_FILE"
+validate_path_arg "$OUTPUT_DIR"
+
 if [[ ! -f "$AUDIO_FILE" ]]; then
-    echo "Error: File not found: $AUDIO_FILE"
+    echo "Error: File not found: $AUDIO_FILE" >&2
     exit 1
 fi
 
-if [[ -z "$GEMINI_API_KEY" ]]; then
-    echo "Error: GEMINI_API_KEY not set"
-    exit 1
+# Validate API key
+validate_api_key || exit 1
+
+# Select model if not specified
+if [[ -z "$MODEL" ]]; then
+    MODEL=$(select_model "transcribe")
 fi
 
-# Convert to MP3 (16kHz mono) for Gemini API
-CONVERTED_FILE="$OUTPUT_DIR/$(basename "$AUDIO_FILE").mp3"
-ffmpeg -y -i "$AUDIO_FILE" -ar 16000 -ac 1 -c:a libmp3lame "$CONVERTED_FILE" 2>/dev/null
-
-# Base64 encode
-AUDIO_DATA=$(base64 -w0 "$CONVERTED_FILE")
-
-# Call Gemini API
-RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$GEMINI_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"contents\": [{
-            \"parts\": [
-                {\"text\": \"请将这段音频转录成文字，只输出文字内容\"},
-                {\"inlineData\": {
-                    \"mimeType\": \"audio/mpeg\",
-                    \"data\": \"$AUDIO_DATA\"
-                }}
-            ]
-        }]
-    }")
-
-# Extract text from response
-TRANSCRIPT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' 2>/dev/null)
-
-if [[ -z "$TRANSCRIPT" || "$TRANSCRIPT" == "null" ]]; then
-    echo "Error: Failed to transcribe audio"
-    echo "$RESPONSE"
+# Convert audio (with caching)
+CONVERTED_FILE=$(convert_audio "$AUDIO_FILE") || {
+    echo "Error: Failed to convert audio" >&2
     exit 1
+}
+
+# Encode to base64
+AUDIO_DATA=$(encode_audio_base64 "$CONVERTED_FILE") || {
+    echo "Error: Failed to encode audio" >&2
+    exit 1
+}
+
+# Build prompt
+if [[ "$USE_SIMPLE_PROMPT" == "true" ]]; then
+    PROMPT=$(build_simple_prompt)
+else
+    PROMPT=$(build_transcription_prompt)
 fi
+
+# Call API with retry logic
+TRANSCRIPT=$(transcribe_audio "$AUDIO_DATA" "$PROMPT" "$MODEL") || {
+    echo "Error: Failed to transcribe audio" >&2
+    exit 1
+}
 
 echo "$TRANSCRIPT"
-
-# Cleanup
-rm -f "$CONVERTED_FILE"
