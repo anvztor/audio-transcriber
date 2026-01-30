@@ -11,6 +11,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/convert-audio.sh"
 source "$SCRIPT_DIR/lib/gemini-client.sh"
 source "$SCRIPT_DIR/lib/prompts.sh"
+source "$SCRIPT_DIR/lib/intent-rules.sh"
+source "$SCRIPT_DIR/lib/whisper-client.sh"
+
+TRANSCRIBER_MODE="${TRANSCRIBER_MODE:-api}"
 
 AUDIO_FILE="${1:-}"
 MODEL=""
@@ -61,11 +65,14 @@ if [[ -z "$AUDIO_FILE" || ! -f "$AUDIO_FILE" ]]; then
 fi
 validate_audio_path "$AUDIO_FILE"
 
-# Validate API key
-validate_api_key || exit 1
-
-# Select model for execution
-MODEL=$(select_model "execute")
+# Check mode
+case "$TRANSCRIBER_MODE" in
+    api|local) ;;
+    *)
+        echo "Error: TRANSCRIBER_MODE must be 'api' or 'local'" >&2
+        exit 1
+        ;;
+esac
 
 # Convert audio
 CONVERTED_FILE=$(convert_audio "$AUDIO_FILE") || {
@@ -73,31 +80,48 @@ CONVERTED_FILE=$(convert_audio "$AUDIO_FILE") || {
     exit 1
 }
 
-# Encode and build prompt
-AUDIO_DATA=$(encode_audio_base64 "$CONVERTED_FILE")
-PROMPT=$(build_execution_prompt)
+# Local mode: transcribe and use local intent analysis
+if [[ "$TRANSCRIBER_MODE" == "local" ]]; then
+    if ! check_whisper_installed; then
+        if ! install_whisper_if_needed; then
+            echo "Error: openai-whisper not installed" >&2
+            exit 1
+        fi
+    fi
 
-# Build payload
-PAYLOAD=$(jq -n \
-    --arg prompt "$PROMPT" \
-    --arg audio "$AUDIO_DATA" \
-    '{
-        contents: [{
-            parts: [
-                {text: $prompt},
-                {inlineData: {mimeType: "audio/mpeg", data: $audio}}
-            ]
-        }]
-    }')
+    TRANSCRIPT=$(transcribe_audio_whisper "$CONVERTED_FILE" "${WHISPER_MODEL:-}" 2>/dev/null) || {
+        echo "Error: Failed to transcribe audio locally" >&2
+        exit 1
+    }
 
-# Call API
-RESPONSE=$(call_gemini_api "$PAYLOAD" "$MODEL" "execute") || {
-    echo "Error: Failed to analyze command" >&2
-    exit 1
-}
+    INTENT=$(analyze_intent_local "$TRANSCRIPT")
+else
+    # API mode
+    validate_api_key || exit 1
+    MODEL=$(select_model "execute")
 
-# Parse response
-INTENT=$(parse_response "$RESPONSE")
+    AUDIO_DATA=$(encode_audio_base64 "$CONVERTED_FILE")
+    PROMPT=$(build_execution_prompt)
+
+    PAYLOAD=$(jq -n \
+        --arg prompt "$PROMPT" \
+        --arg audio "$AUDIO_DATA" \
+        '{
+            contents: [{
+                parts: [
+                    {text: $prompt},
+                    {inlineData: {mimeType: "audio/mpeg", data: $audio}}
+                ]
+            }]
+        }')
+
+    RESPONSE=$(call_gemini_api "$PAYLOAD" "$MODEL" "execute") || {
+        echo "Error: Failed to analyze command" >&2
+        exit 1
+    }
+
+    INTENT=$(parse_response "$RESPONSE")
+fi
 
 echo "【语音识别结果】"
 echo "$INTENT"
